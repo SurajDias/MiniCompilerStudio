@@ -14,6 +14,38 @@ const PipelinePage = () => {
   const [activeStep, setActiveStep] = useState(-1);
   const [isPlaying, setIsPlaying] = useState(false);
 
+  // 🔥 NEW: store backend data
+  const [code] = useState(`a = 2 * 3;
+b = a + 0;`);
+
+  const [tokens, setTokens] = useState([]);
+  const [syntax, setSyntax] = useState('');
+  const [tac, setTac] = useState([]);
+  const [optimized, setOptimized] = useState([]);
+
+  // 🔥 FETCH ON PLAY
+  const fetchPipeline = async () => {
+    try {
+      const res = await fetch("http://127.0.0.1:5000/compile", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ code })
+      });
+
+      const data = await res.json();
+
+      setTokens(data.tokens || []);
+      setSyntax(data.syntax || "");
+      setTac(data.tac || []);
+      setOptimized(data.optimized || []);
+
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   useEffect(() => {
     let interval;
     if (isPlaying) {
@@ -31,6 +63,10 @@ const PipelinePage = () => {
   }, [isPlaying]);
 
   const handlePlayPause = () => {
+    if (!isPlaying) {
+      fetchPipeline(); // 🔥 fetch before animation
+    }
+
     if (activeStep >= stages.length - 1) setActiveStep(-1);
     setIsPlaying(!isPlaying);
   };
@@ -47,104 +83,81 @@ const PipelinePage = () => {
     setActiveStep(-1);
   };
 
+  // 🔥 FUNCTION TO SHOW DATA PER STEP
+  const getStageOutput = (id) => {
+    switch (id) {
+      case 'source':
+        return code;
+      case 'lexer':
+        return tokens.join("\n");
+      case 'parser':
+        return syntax;
+      case 'tac':
+        return tac.join("\n");
+      case 'optimizer':
+        return optimized.join("\n");
+      default:
+        return "";
+    }
+  };
+
   return (
     <div className="h-full w-full flex flex-col items-center p-6 relative z-10">
       
-      {/* Header & Controls */}
-      <div className="w-full max-w-4xl bg-black/40 border border-gray-800 rounded-xl p-6 mb-12 flex items-center justify-between shadow-sm">
+      {/* Header */}
+      <div className="w-full max-w-4xl bg-black/40 border border-gray-800 rounded-xl p-6 mb-12 flex items-center justify-between">
         <div>
-          <h2 className="font-orbitron font-medium text-xl tracking-widest text-cyan-400">COMPILATION_PIPELINE</h2>
-          <p className="text-gray-400 font-inter text-sm mt-1">Real-time execution sequence monitoring</p>
+          <h2 className="font-orbitron text-xl tracking-widest text-cyan-400">COMPILATION_PIPELINE</h2>
+          <p className="text-gray-400 text-sm mt-1">Real-time execution sequence monitoring</p>
         </div>
         
         <div className="flex space-x-4">
-           <button 
-             onClick={handlePlayPause}
-             className="w-12 h-12 rounded-full border border-gray-700 flex items-center justify-center text-cyan-400 hover:bg-cyan-400/10 hover:border-cyan-400/50 transition-all shadow-sm"
-           >
-             {isPlaying ? <Pause size={18} /> : <Play size={18} className="ml-1" />}
+           <button onClick={handlePlayPause} className="w-12 h-12 rounded-full border border-gray-700 flex items-center justify-center text-cyan-400">
+             {isPlaying ? <Pause size={18} /> : <Play size={18} />}
            </button>
-           <button 
-             onClick={handleStep}
-             disabled={isPlaying || activeStep >= stages.length - 1}
-             className="w-12 h-12 rounded-full border border-gray-700 flex items-center justify-center text-purple-400 hover:bg-purple-500/10 hover:border-purple-500/50 transition-all disabled:opacity-30 disabled:hover:shadow-none shadow-sm"
-           >
+           <button onClick={handleStep} className="w-12 h-12 rounded-full border border-gray-700 flex items-center justify-center text-purple-400">
              <StepForward size={18} />
            </button>
-           <button 
-             onClick={handleReset}
-             className="w-12 h-12 rounded-full border border-gray-600 flex items-center justify-center text-gray-400 hover:text-white hover:bg-white/10 transition-all"
-           >
+           <button onClick={handleReset} className="w-12 h-12 rounded-full border border-gray-600 flex items-center justify-center text-gray-400">
              <RotateCcw size={20} />
            </button>
         </div>
       </div>
 
-      {/* Vertical Pipeline Layout */}
       <div className="flex-1 w-full max-w-2xl flex flex-col items-center relative">
         
-        {/* Connection Line Background */}
-        <div className="absolute top-0 bottom-0 left-1/2 -translate-x-1/2 w-1 bg-gray-800 rounded-full" />
-        
-        {/* Animated Active Line */}
+        <div className="absolute top-0 bottom-0 left-1/2 -translate-x-1/2 w-1 bg-gray-800" />
+
         <motion.div 
-           className="absolute top-0 left-1/2 -translate-x-1/2 w-1 bg-gradient-to-b from-cyan via-purple to-green-400 rounded-full shadow-[0_0_15px_rgba(0,229,255,0.8)]"
+           className="absolute top-0 left-1/2 -translate-x-1/2 w-1 bg-gradient-to-b from-cyan via-purple to-green-400"
            initial={{ height: 0 }}
            animate={{ height: activeStep >= 0 ? `${(activeStep / (stages.length - 1)) * 100}%` : "0%" }}
-           transition={{ duration: 0.5, ease: "easeInOut" }}
         />
 
-        {/* Pipeline Stages */}
         {stages.map((stage, index) => {
           const isActive = index === activeStep;
           const isPassed = index < activeStep;
           
           return (
-            <div key={stage.id} className="relative w-full flex justify-center items-center my-6 group">
+            <div key={stage.id} className="relative w-full flex justify-center items-center my-6">
                
-               {/* Icon Node */}
-               <motion.div 
-                 className={`relative z-10 w-20 h-20 rounded-2xl flex items-center justify-center bg-[#0B0F1A] border transition-all duration-300 ${
-                   isActive ? `${stage.color} shadow-[0_0_15px_rgba(255,255,255,0.1)] scale-105` : 
-                   isPassed ? `${stage.color} opacity-60` : 
-                   'border-gray-800 text-gray-700 opacity-40'
-                 }`}
-                 animate={{ rotate: isActive ? [0, -2, 2, -2, 0] : 0 }}
-                 transition={{ repeat: isActive ? Infinity : 0, duration: 2 }}
-               >
-                 <div className={isActive || isPassed ? stage.color.replace('border-', 'text-') : 'text-gray-600'}>
-                    {stage.icon}
-                 </div>
-               </motion.div>
+               <div className={`relative z-10 w-20 h-20 rounded-2xl flex items-center justify-center bg-[#0B0F1A] border ${
+                   isActive ? stage.color : isPassed ? stage.color : 'border-gray-800'
+               }`}>
+                 {stage.icon}
+               </div>
 
-               {/* Left/Right Content alternating */}
-               <div className={`absolute top-1/2 -translate-y-1/2 w-[calc(50%-3rem)] ${index % 2 === 0 ? 'right-0 pl-12 text-left' : 'left-0 pr-12 text-right'}`}>
-                  <motion.div
-                    initial={{ opacity: 0, x: index % 2 === 0 ? -20 : 20 }}
-                    animate={{ opacity: isActive || isPassed ? 1 : 0.3, x: 0 }}
-                    transition={{ duration: 0.5 }}
-                  >
-                    <h3 className={`font-orbitron tracking-widest text-lg mb-1 ${isActive ? 'text-white text-shadow-glow' : 'text-gray-500'}`}>
-                      {stage.title}
-                    </h3>
-                    <p className="font-mono text-xs text-gray-500">{stage.desc}</p>
-                    
-                    {/* Activity indicator if active */}
-                    <AnimatePresence>
-                      {isActive && (
-                        <motion.div 
-                          initial={{ opacity: 0, height: 0 }}
-                          animate={{ opacity: 1, height: 'auto' }}
-                          exit={{ opacity: 0, height: 0 }}
-                          className={`mt-3 p-3 text-xs font-mono rounded border ${stage.color} bg-[#0B0F1A]/80 inline-block`}
-                        >
-                          <span className="flex items-center text-cyan">
-                            <Zap size={12} className="mr-2 animate-pulse" /> Processing chunks... [OK]
-                          </span>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </motion.div>
+               <div className={`absolute top-1/2 -translate-y-1/2 w-[calc(50%-3rem)] ${index % 2 === 0 ? 'right-0 pl-12' : 'left-0 pr-12'}`}>
+                  
+                  <h3 className="text-white text-sm mb-1">{stage.title}</h3>
+
+                  {/* 🔥 REAL DATA OUTPUT */}
+                  {isActive && (
+                    <div className="mt-3 p-3 text-xs font-mono rounded border border-cyan-400 bg-black/60 whitespace-pre-wrap max-h-40 overflow-auto">
+                      {getStageOutput(stage.id) || "Processing..."}
+                    </div>
+                  )}
+
                </div>
             </div>
           );

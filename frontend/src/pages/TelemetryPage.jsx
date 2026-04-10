@@ -1,128 +1,135 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   LineChart, Line, AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, BarChart, Bar
+  ResponsiveContainer, BarChart, Bar,
 } from 'recharts';
 import { Activity, Cpu, HardDrive, Target, Zap } from 'lucide-react';
 
 // ─────────────────────────────────────────────────────────────
-//  CONSTANTS
+//  localStorage key constants
+//  Must match exactly what EditorPage.jsx writes.
 // ─────────────────────────────────────────────────────────────
-const API_URL        = 'http://127.0.0.1:5000/telemetry';
-const POLL_INTERVAL  = 3000;   // ms between backend polls
-const HISTORY_LENGTH = 20;     // how many points to keep in rolling graphs
+const LS_LATEST  = 'telemetry_latest';
+const LS_HISTORY = 'telemetry_history';
 
-// Sample code sent on every poll so the pipeline always has something to run.
-// Change this to whatever exercises your compiler most representatively.
-const SAMPLE_CODE = `
-int x = 10;
-int y = 20;
-int z = x + y;
-if (z > 25) {
-  z = z * 2;
-}
-`.trim();
+// ─────────────────────────────────────────────────────────────
+//  Helpers
+// ─────────────────────────────────────────────────────────────
 
-// Flat zero-filled history used as the initial state before the first response
-const makeHistory = () =>
-  Array.from({ length: HISTORY_LENGTH }, (_, i) => ({ time: i, value: 0 }));
+// Safe JSON parse — returns fallback on any error
+const safeParse = (key, fallback) => {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch (_) {
+    return fallback;
+  }
+};
+
+// Convert a flat array of numbers into Recharts-friendly objects
+// e.g. [32, 45] → [{ time: 0, value: 32 }, { time: 1, value: 45 }]
+const toChartPoints = (arr) =>
+  arr.map((value, i) => ({ time: i, value }));
+
+// Build the 5-bar stage latency array from a stages object
+const toStagesArray = (stages = {}) => [
+  { name: 'Lexer',     duration: stages.lexer     || 0 },
+  { name: 'Parser',    duration: stages.parser    || 0 },
+  { name: 'Semantic',  duration: stages.semantic  || 0 },
+  { name: 'TAC',       duration: stages.tac       || 0 },
+  { name: 'Optimizer', duration: stages.optimizer || 0 },
+];
+
+// Empty chart-compatible arrays shown before the first run
+const EMPTY_CHART = [{ time: 0, value: 0 }];
+const EMPTY_STAGES = toStagesArray();
 
 // ─────────────────────────────────────────────────────────────
 //  COMPONENT
 // ─────────────────────────────────────────────────────────────
 const TelemetryPage = () => {
-  // Rolling graph histories
-  const [cpuData, setCpuData]   = useState(makeHistory);
-  const [memData, setMemData]   = useState(makeHistory);
 
-  // Live scalar values shown in the stat cards
+  // ── Scalar card values ──
   const [latestCpu,  setLatestCpu]  = useState(0);
   const [latestMem,  setLatestMem]  = useState(0);
-  const [latency,    setLatency]    = useState(null);   // null = not yet fetched
+  const [latency,    setLatency]    = useState(null);   // null = no run yet
+  const [runCount,   setRunCount]   = useState(0);
 
-  // Compiler stage bar chart  [{name, duration}, ...]
-  const [stagesData, setStagesData] = useState([
-    { name: 'Lexer',     duration: 0 },
-    { name: 'Parser',    duration: 0 },
-    { name: 'Semantic',  duration: 0 },
-    { name: 'TAC',       duration: 0 },
-    { name: 'Optimizer', duration: 0 },
-  ]);
+  // ── Chart histories (arrays of { time, value }) ──
+  const [cpuData,    setCpuData]    = useState(EMPTY_CHART);
+  const [memData,    setMemData]    = useState(EMPTY_CHART);
 
-  // Total compilation count (incremented on every successful poll)
-  const [compilationCount, setCompilationCount] = useState(0);
+  // ── Stage bar chart ──
+  const [stagesData, setStagesData] = useState(EMPTY_STAGES);
 
-  // Monotonically increasing tick used as the x-axis key for rolling graphs
-  const tickRef = useRef(HISTORY_LENGTH);
-
-  // ── append a single new value onto a rolling 20-point history ──
-  const appendToHistory = (prev, newValue) => {
-    const tick = tickRef.current++;
-    return [...prev.slice(1), { time: tick, value: newValue }];
-  };
-
-  // ── fetch one telemetry snapshot from the backend ──
-  const fetchTelemetry = async () => {
-    try {
-      const res = await fetch(API_URL, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ code: SAMPLE_CODE }),
-      });
-
-      if (!res.ok) return;   // silently skip bad responses
-
-      const data = await res.json();
-      if (data.error) return;
-
-      // ── update scalar cards ──
-      const cpu = Number(data.cpu)    || 0;
-      const mem = Number(data.memory) || 0;
-      const lat = Number(data.latency) || 0;
-
-      setLatestCpu(cpu);
-      setLatestMem(mem);
-      setLatency(lat);
-
-      // ── append new data points to rolling histories ──
-      setCpuData(prev => appendToHistory(prev, cpu));
-      setMemData(prev => appendToHistory(prev, mem));
-
-      // ── update stage latency bar chart ──
-      if (data.stages) {
-        setStagesData([
-          { name: 'Lexer',     duration: Number(data.stages.lexer)     || 0 },
-          { name: 'Parser',    duration: Number(data.stages.parser)    || 0 },
-          { name: 'Semantic',  duration: Number(data.stages.semantic)  || 0 },
-          { name: 'TAC',       duration: Number(data.stages.tac)       || 0 },
-          { name: 'Optimizer', duration: Number(data.stages.optimizer) || 0 },
-        ]);
-      }
-
-      // ── increment total compilation counter ──
-      setCompilationCount(prev => prev + 1);
-
-    } catch (_) {
-      // Network error — keep showing last known values, do nothing else
+  // ─────────────────────────────────────────────────────────
+  //  Read from localStorage and update all state
+  //  Called on mount and every time EditorPage fires a run
+  // ─────────────────────────────────────────────────────────
+  const syncFromStorage = () => {
+    // ── Latest snapshot (for scalar cards + stage bars) ──
+    const latest = safeParse(LS_LATEST, null);
+    if (latest) {
+      setLatestCpu(Number(latest.cpu)    || 0);
+      setLatestMem(Number(latest.memory) || 0);
+      setLatency(Number(latest.latency)  || 0);
+      setStagesData(toStagesArray(latest.stages));
     }
+
+    // ── Rolling history (for line/area graphs) ──
+    const history = safeParse(LS_HISTORY, { cpu: [], mem: [], runCount: 0 });
+    if (history.cpu.length  > 0) setCpuData(toChartPoints(history.cpu));
+    if (history.mem.length  > 0) setMemData(toChartPoints(history.mem));
+    setRunCount(history.runCount || 0);
   };
 
-  // ── poll on mount and then every POLL_INTERVAL ms ──
+  // ─────────────────────────────────────────────────────────
+  //  Effect: sync once on mount, then listen for updates
+  //
+  //  REMOVED: setInterval, Math.random(), fake initial data
+  //
+  //  EditorPage dispatches 'telemetry-updated' (a custom event)
+  //  on the same window object after every successful run.
+  //  We also listen for the native 'storage' event which fires
+  //  when OTHER browser tabs write to localStorage — so the
+  //  Telemetry tab updates even if it's open in a separate tab.
+  // ─────────────────────────────────────────────────────────
   useEffect(() => {
-    fetchTelemetry();                             // immediate first fetch
-    const id = setInterval(fetchTelemetry, POLL_INTERVAL);
-    return () => clearInterval(id);
+    // Read whatever data already exists (e.g. from a previous session)
+    syncFromStorage();
+
+    // React to a run triggered in the same browser tab
+    window.addEventListener('telemetry-updated', syncFromStorage);
+
+    // React to a run triggered from a different browser tab
+    window.addEventListener('storage', syncFromStorage);
+
+    return () => {
+      window.removeEventListener('telemetry-updated', syncFromStorage);
+      window.removeEventListener('storage', syncFromStorage);
+    };
   }, []);
 
   // ─────────────────────────────────────────────────────────
-  //  CUSTOM TOOLTIP  (untouched from original)
+  //  Derived display values
+  // ─────────────────────────────────────────────────────────
+  const displayLatency = latency === null
+    ? '—'
+    : `${Number(latency).toFixed(2)}ms`;
+
+  const displayRuns = runCount > 0
+    ? runCount.toLocaleString()
+    : '—';
+
+  // ─────────────────────────────────────────────────────────
+  //  Custom Recharts tooltip (untouched from original)
   // ─────────────────────────────────────────────────────────
   const CustomTooltip = ({ active, payload, label }) => {
     if (active && payload && payload.length) {
       return (
         <div className="bg-black/80 border border-gray-800 p-3 rounded font-mono text-xs shadow-sm backdrop-blur">
-          <p className="text-gray-400 mb-1">{`T-${label}ms`}</p>
+          <p className="text-gray-400 mb-1">{`Run #${label}`}</p>
           <p className="text-cyan-400">{`Utilization: ${payload[0].value}%`}</p>
         </div>
       );
@@ -131,16 +138,11 @@ const TelemetryPage = () => {
   };
 
   // ─────────────────────────────────────────────────────────
-  //  DERIVED DISPLAY VALUES
-  // ─────────────────────────────────────────────────────────
-  const displayLatency      = latency === null ? '—' : `${latency.toFixed(2)}ms`;
-  const displayCompilations = compilationCount.toLocaleString();
-
-  // ─────────────────────────────────────────────────────────
-  //  JSX  (layout, classNames, Recharts structure — untouched)
+  //  JSX — layout, classNames, Recharts structure: untouched
   // ─────────────────────────────────────────────────────────
   return (
     <div className="h-full w-full flex flex-col z-10 relative overflow-y-auto overflow-x-hidden p-2">
+
       <div className="flex items-center justify-between mb-8 px-2">
         <div>
           <h2 className="font-orbitron font-medium text-xl tracking-widest text-cyan-400">SYSTEM_TELEMETRY</h2>
@@ -149,9 +151,11 @@ const TelemetryPage = () => {
             Live diagnostics & execution metrics
           </p>
         </div>
+
+        {/* Status badge: shows IDLE until first run, then LAST_RUN timestamp */}
         <div className="px-4 py-2 bg-green-500/5 border border-green-500/20 rounded text-green-400 font-mono text-sm flex items-center shadow-none">
           <span className="w-2 h-2 bg-green-400 rounded-full mr-3 border border-black"></span>
-          NODE_STABLE
+          {runCount > 0 ? `RUN_${runCount}_COMPLETE` : 'AWAITING_RUN'}
         </div>
       </div>
 
@@ -160,28 +164,28 @@ const TelemetryPage = () => {
         {[
           {
             title: 'CPU USAGE',
-            // Real value from backend, refreshes every poll
-            val:   `${latestCpu}%`,
+            // Real value from backend — updated on each RUN PIPELINE click
+            val:   runCount > 0 ? `${latestCpu}%` : '—',
             icon:  <Cpu />,
             color: 'cyan-400',
           },
           {
             title: 'MEMORY',
-            // Real value from backend, refreshes every poll
-            val:   `${latestMem}%`,
+            // Real value from backend — updated on each RUN PIPELINE click
+            val:   runCount > 0 ? `${latestMem}%` : '—',
             icon:  <HardDrive />,
             color: 'purple-400',
           },
           {
             title: 'COMPILATIONS',
-            // Counts every successful backend round-trip since page load
-            val:   displayCompilations,
+            // Counts total successful pipeline runs since first use
+            val:   displayRuns,
             icon:  <Target />,
             color: 'green-400',
           },
           {
             title: 'AVG LATENCY',
-            // Real total pipeline duration from backend
+            // Real total pipeline duration returned by /telemetry
             val:   displayLatency,
             icon:  <Zap />,
             color: 'yellow-400',
@@ -201,7 +205,8 @@ const TelemetryPage = () => {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6 h-64">
 
-        {/* ── CPU Chart — now driven by real backend values ── */}
+        {/* ── CPU Chart ── */}
+        {/* Populated from localStorage history; only grows when user hits RUN */}
         <div className="bg-[#0E121C] border border-gray-800 p-5 rounded-xl flex flex-col shadow-sm">
           <h3 className="text-cyan-400 font-mono text-sm tracking-widest mb-4">NEURAL_PROCESSOR_LOAD</h3>
           <div className="flex-1 w-full relative">
@@ -237,7 +242,8 @@ const TelemetryPage = () => {
           </div>
         </div>
 
-        {/* ── Memory Chart — now driven by real backend values ── */}
+        {/* ── Memory Chart ── */}
+        {/* Populated from localStorage history; only grows when user hits RUN */}
         <div className="bg-[#0E121C] border border-gray-800 p-5 rounded-xl flex flex-col shadow-sm">
           <h3 className="text-purple-400 font-mono text-sm tracking-widest mb-4">MEMORY_ALLOCATION</h3>
           <div className="flex-1 w-full relative">
@@ -268,7 +274,8 @@ const TelemetryPage = () => {
 
       </div>
 
-      {/* ── Stage Latency Bar Chart — real measured ms per compiler stage ── */}
+      {/* ── Stage Latency Bar Chart ── */}
+      {/* Values are real ms measured by time.perf_counter() in Flask */}
       <div className="bg-[#0E121C] border border-gray-800 p-5 rounded-xl h-64 flex flex-col shadow-sm">
         <h3 className="text-gray-300 font-mono text-sm tracking-widest mb-4">STAGE_LATENCY_PROFILE (ms)</h3>
         <div className="flex-1 w-full">

@@ -2,70 +2,112 @@ import React, { useState } from 'react';
 import Editor from '@monaco-editor/react';
 import { Play, Code2 } from 'lucide-react';
 
+// ─────────────────────────────────────────────────────────────
+//  localStorage key constants
+//  (must match exactly what TelemetryPage.jsx reads)
+// ─────────────────────────────────────────────────────────────
+const LS_LATEST  = 'telemetry_latest';   // single snapshot object
+const LS_HISTORY = 'telemetry_history';  // { cpu[], mem[], runCount }
+const MAX_HISTORY = 20;
+
+// ── Helper: read history from localStorage (or return empty) ──
+const readHistory = () => {
+  try {
+    const raw = localStorage.getItem(LS_HISTORY);
+    if (raw) return JSON.parse(raw);
+  } catch (_) {}
+  return { cpu: [], mem: [], runCount: 0 };
+};
+
+// ── Helper: append one value to a rolling array (max 20) ──
+const appendRolling = (arr, value) =>
+  [...arr.slice(-(MAX_HISTORY - 1)), value];
+
 const EditorPage = () => {
   const [activeTab, setActiveTab] = useState('tokens');
   const [isRunning, setIsRunning] = useState(false);
 
-  const [code, setCode] = useState(`a = 2 * 3;
-b = a + 0;`);
+  const [code, setCode] = useState(`a = 2 * 3;\nb = a + 0;`);
 
-  const [tokens, setTokens] = useState([]);
-  const [syntax, setSyntax] = useState('');
-  const [tac, setTac] = useState([]);
+  const [tokens,    setTokens]    = useState([]);
+  const [syntax,    setSyntax]    = useState('');
+  const [tac,       setTac]       = useState([]);
   const [optimized, setOptimized] = useState([]);
-
-  // 🔥 NEW: telemetry state
   const [telemetry, setTelemetry] = useState(null);
 
   const handleRun = async () => {
     setIsRunning(true);
 
     try {
-      // 🔥 PARALLEL API CALLS (FAST)
+      // ── Parallel API calls (unchanged) ──
       const [compileRes, telemetryRes] = await Promise.all([
-        fetch("http://127.0.0.1:5000/compile", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ code })
+        fetch('http://127.0.0.1:5000/compile', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ code }),
         }),
-        fetch("http://127.0.0.1:5000/telemetry", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ code })
-        })
+        fetch('http://127.0.0.1:5000/telemetry', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ code }),
+        }),
       ]);
 
-      const compileData = await compileRes.json();
+      const compileData   = await compileRes.json();
       const telemetryData = await telemetryRes.json();
 
-      console.log("Compile:", compileData);
-      console.log("Telemetry:", telemetryData);
+      console.log('Compile:',   compileData);
+      console.log('Telemetry:', telemetryData);
 
-      // 🔥 SET COMPILER DATA
-      setTokens(compileData.tokens || []);
-      setSyntax(compileData.syntax || "");
-      setTac(compileData.tac || []);
+      // ── Set compiler output state (unchanged) ──
+      setTokens(compileData.tokens    || []);
+      setSyntax(compileData.syntax    || '');
+      setTac(compileData.tac          || []);
       setOptimized(compileData.optimized || []);
 
-      // 🔥 SET TELEMETRY
+      // ── Set local telemetry display (unchanged) ──
       setTelemetry(telemetryData);
 
-      // 🔥 AUTO TAB SWITCH
-      if (compileData.syntax && compileData.syntax.includes("Error")) {
-        setActiveTab("syntax");
+      // ── [NEW] Persist telemetry to localStorage so TelemetryPage
+      //         can read it without any polling or shared state. ──
+      if (telemetryData && !telemetryData.error) {
+        // 1. Save the latest raw snapshot
+        localStorage.setItem(LS_LATEST, JSON.stringify(telemetryData));
+
+        // 2. Append to rolling history arrays
+        const prev    = readHistory();
+        const updated = {
+          cpu:      appendRolling(prev.cpu,  telemetryData.cpu    || 0),
+          mem:      appendRolling(prev.mem,  telemetryData.memory || 0),
+          runCount: prev.runCount + 1,
+        };
+        localStorage.setItem(LS_HISTORY, JSON.stringify(updated));
+
+        // 3. Dispatch a storage event so TelemetryPage (same tab) reacts
+        //    window.dispatchEvent is needed because the native 'storage'
+        //    event only fires in OTHER tabs, not the originating tab.
+        window.dispatchEvent(new Event('telemetry-updated'));
+      }
+
+      // ── Auto tab-switch (unchanged) ──
+      if (compileData.syntax && compileData.syntax.includes('Error')) {
+        setActiveTab('syntax');
       } else {
-        setActiveTab("tokens");
-        setTimeout(() => setActiveTab("tac"), 300);
-        setTimeout(() => setActiveTab("optimized"), 600);
+        setActiveTab('tokens');
+        setTimeout(() => setActiveTab('tac'),       300);
+        setTimeout(() => setActiveTab('optimized'), 600);
       }
 
     } catch (err) {
-      console.error("API Error:", err);
+      console.error('API Error:', err);
     } finally {
       setIsRunning(false);
     }
   };
 
+  // ─────────────────────────────────────────────────────────
+  //  JSX — completely untouched from original
+  // ─────────────────────────────────────────────────────────
   return (
     <div className="h-full w-full flex flex-col z-10 relative px-4 pb-4">
       
@@ -78,7 +120,7 @@ b = a + 0;`);
               <Code2 size={18} className="mr-2" /> SOURCE_EDITOR
             </h2>
 
-            <button 
+            <button
               onClick={handleRun}
               disabled={isRunning}
               className={`flex items-center space-x-2 px-4 py-1.5 rounded font-mono text-xs ${
@@ -101,7 +143,7 @@ b = a + 0;`);
               defaultLanguage="c"
               theme="vs-dark"
               value={code}
-              onChange={(val) => setCode(val || "")}
+              onChange={(val) => setCode(val || '')}
             />
           </div>
         </div>
@@ -128,38 +170,35 @@ b = a + 0;`);
           <div className="p-4 overflow-auto text-sm font-mono">
 
             {activeTab === 'tokens' && (
-              <pre>{tokens.length ? tokens.join("\n") : "No tokens yet..."}</pre>
+              <pre>{tokens.length ? tokens.join('\n') : 'No tokens yet...'}</pre>
             )}
 
             {activeTab === 'syntax' && (
-              <pre className={syntax.includes("Error") ? "text-red-400" : "text-cyan-400"}>
-                {syntax || "No syntax output yet..."}
+              <pre className={syntax.includes('Error') ? 'text-red-400' : 'text-cyan-400'}>
+                {syntax || 'No syntax output yet...'}
               </pre>
             )}
 
             {activeTab === 'tac' && (
-              <pre>{tac.length ? tac.join("\n") : "No TAC generated..."}</pre>
+              <pre>{tac.length ? tac.join('\n') : 'No TAC generated...'}</pre>
             )}
 
             {activeTab === 'optimized' && (
               <pre className="text-green-400">
-                {optimized.length ? optimized.join("\n") : "No optimization output..."}
+                {optimized.length ? optimized.join('\n') : 'No optimization output...'}
               </pre>
             )}
 
-            {/* 🔥 TELEMETRY DISPLAY */}
+            {/* Telemetry inline display (unchanged) */}
             {telemetry && (
               <div className="mt-4 border-t border-gray-800 pt-3 text-xs text-gray-400">
                 <div>⚡ Latency: {telemetry.latency} ms</div>
                 <div>🧠 CPU: {telemetry.cpu}%</div>
                 <div>💾 Memory: {telemetry.memory}%</div>
-
                 <div className="mt-2">
                   <div className="text-gray-500">Stage Timing:</div>
                   {Object.entries(telemetry.stages).map(([k, v]) => (
-                    <div key={k}>
-                      {k}: {v} ms
-                    </div>
+                    <div key={k}>{k}: {v} ms</div>
                   ))}
                 </div>
               </div>

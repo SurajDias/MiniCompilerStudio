@@ -3,66 +3,32 @@ import ReactFlow, {
   Controls, Background,
   useNodesState, useEdgesState,
   MarkerType, Handle, Position,
-  EdgeLabelRenderer, BaseEdge,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { Settings, Bell, HelpCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 // ─────────────────────────────────────────────────────────────
-//  SELF-LOOP EDGE
-//  React Flow sets source === target to the same x/y, which
-//  produces a zero-length invisible path.  We draw the loop
-//  manually as a cubic bezier arc above the node.
+//  SELF-LOOP EDGE  (untouched)
 // ─────────────────────────────────────────────────────────────
 const SelfLoopEdge = ({ id, sourceX, sourceY, label, style, markerEnd }) => {
-  // Control-point spread and lift height
   const spread = 40;
   const lift   = 70;
-
-  // Cubic bezier: start slightly left of center, arc upward, land slightly right
   const d = [
     `M ${sourceX - 8},${sourceY - 10}`,
     `C ${sourceX - spread},${sourceY - lift}`,
     `  ${sourceX + spread},${sourceY - lift}`,
     `  ${sourceX + 8},${sourceY - 10}`,
   ].join(' ');
-
-  // Label sits at the top of the arc
   const labelX = sourceX;
   const labelY = sourceY - lift - 4;
-
   return (
     <g>
-      {/* The arc path */}
-      <path
-        id={id}
-        d={d}
-        fill="none"
-        style={style}
-        markerEnd={markerEnd}
-      />
-      {/* Label background pill */}
+      <path id={id} d={d} fill="none" style={style} markerEnd={markerEnd} />
       {label && (
         <>
-          <rect
-            x={labelX - 12}
-            y={labelY - 13}
-            width={24}
-            height={16}
-            rx={3}
-            fill="#0a0d16"
-            fillOpacity={0.9}
-          />
-          <text
-            x={labelX}
-            y={labelY}
-            textAnchor="middle"
-            dominantBaseline="middle"
-            fill="#e2e8f0"
-            fontSize={11}
-            fontFamily="monospace"
-          >
+          <rect x={labelX - 12} y={labelY - 13} width={24} height={16} rx={3} fill="#0a0d16" fillOpacity={0.9} />
+          <text x={labelX} y={labelY} textAnchor="middle" dominantBaseline="middle" fill="#e2e8f0" fontSize={11} fontFamily="monospace">
             {label}
           </text>
         </>
@@ -89,6 +55,9 @@ const StateNode = ({ data, isConnectable }) => {
     borderStyle  = 'border-purple-400';
     glowStyle    = isHovered ? 'shadow-[0_0_15px_rgba(168,85,247,0.4)]' : 'shadow-[0_0_8px_rgba(168,85,247,0.2)]';
     innerClasses = 'ring-2 ring-purple-400/50 ring-inset';
+  } else if (nodeType === 'dead') {
+    borderStyle = 'border-red-900';
+    glowStyle   = 'shadow-none';
   } else {
     borderStyle = isHovered ? 'border-gray-400' : 'border-[#374151]';
   }
@@ -104,26 +73,20 @@ const StateNode = ({ data, isConnectable }) => {
       className="relative flex justify-center items-center"
     >
       <Handle type="target" position={Position.Left} isConnectable={isConnectable} className="opacity-0" />
-
       {nodeType === 'start' && (
-        <div className="absolute -top-5 text-[10px] font-mono text-cyan-400 tracking-widest font-semibold">
-          START
-        </div>
+        <div className="absolute -top-5 text-[10px] font-mono text-cyan-400 tracking-widest font-semibold">START</div>
       )}
-
       <div className={`w-[50px] h-[50px] rounded-full bg-[#0a0d16] flex items-center justify-center font-mono border-2 ${borderStyle} ${glowStyle} ${innerClasses}`}>
         {label}
       </div>
-
       <Handle type="source" position={Position.Right} isConnectable={isConnectable} className="opacity-0" />
     </motion.div>
   );
 };
 
 // ─────────────────────────────────────────────────────────────
-//  NFA BUILD PIPELINE  —  Thompson's Construction
+//  NFA BUILD PIPELINE — Thompson's Construction  (untouched)
 // ─────────────────────────────────────────────────────────────
-
 const tokenizeRegex = (regexStr) => {
   const ops = ['*', '|', '(', ')', '+', '?'];
   return regexStr.split('').map(c => ({ type: ops.includes(c) ? 'operator' : 'literal', value: c }));
@@ -175,7 +138,6 @@ const fs = () => `q${_sid++}`;
 const buildNFA = (postfix) => {
   _sid = 0;
   const stack = [];
-
   for (const tok of postfix) {
     if (tok.type === 'literal') {
       const [s0, s1] = [fs(), fs()];
@@ -227,9 +189,8 @@ const buildNFA = (postfix) => {
 };
 
 // ─────────────────────────────────────────────────────────────
-//  SUBSET CONSTRUCTION  (NFA → raw DFA)
+//  ε-CLOSURE  (untouched — was already correct)
 // ─────────────────────────────────────────────────────────────
-
 const epsilonClosure = (stateSet, transitions) => {
   const closure = new Set(stateSet);
   const stack   = [...stateSet];
@@ -253,13 +214,31 @@ const moveOn = (stateSet, symbol, transitions) =>
 const getAlphabet = (transitions) =>
   [...new Set(transitions.map(t => t.label).filter(l => l !== 'ε'))].sort();
 
+// ─────────────────────────────────────────────────────────────
+//  SUBSET CONSTRUCTION  —  FIX 1: Complete DFA with dead state
+//
+//  BUG (old): when moveOn returned empty, we did `continue` and
+//  added no transition. This left the DFA partial (not every
+//  state had a transition for every symbol). The minimization
+//  then used null → -1 as the dead group, which caused it to
+//  treat "going to null" differently from "going to any real
+//  non-accept state", producing wrong partition splits.
+//
+//  FIX: when moveOn returns empty, explicitly transition to a
+//  DEAD sentinel state. Add DEAD's self-loops for all symbols.
+//  This makes the DFA total/complete. Minimization can now
+//  correctly merge DEAD with any other absorbing non-accept state.
+// ─────────────────────────────────────────────────────────────
+const DEAD_STATE = 'DEAD';   // sentinel id for the trap state
+
 const subsetConstruct = (nfa) => {
   const { transitions, start: nfaStart, accept: nfaAccept } = nfa;
   const alpha = getAlphabet(transitions);
 
-  const keyToId  = new Map();
-  const labelMap = new Map();
+  const keyToId  = new Map();   // sorted-NFA-set string → DFA state id
+  const labelMap = new Map();   // DFA state id → NFA state set
   let counter    = 0;
+  let needsDead  = false;       // only add DEAD if at least one transition goes there
 
   const getOrCreate = (nfaSet) => {
     const key = nfaSet.join(',');
@@ -286,44 +265,84 @@ const subsetConstruct = (nfa) => {
 
     for (const symbol of alpha) {
       const moved = moveOn(currentSet, symbol, transitions);
-      if (!moved.length) continue;
 
-      const closure = epsilonClosure(moved, transitions);
-      const nextId  = getOrCreate(closure);
+      if (!moved.length) {
+        // ── FIX: explicit transition to trap state ──────────
+        // Old code: `continue`  (left DFA incomplete → broke minimization)
+        // New code: transition to DEAD (makes DFA complete/total)
+        dfaTransitions.push({ from: currentId, to: DEAD_STATE, label: symbol });
+        needsDead = true;
 
-      // ── Always push the transition, even when nextId === currentId.
-      //    Self-loops (e.g. D2 --b--> D2) are valid DFA transitions. ──
-      dfaTransitions.push({ from: currentId, to: nextId, label: symbol });
-
-      if (!processed.has(nextId)) worklist.push(closure);
+      } else {
+        const closure = epsilonClosure(moved, transitions);
+        const nextId  = getOrCreate(closure);
+        // Always emit transition — including self-loops
+        dfaTransitions.push({ from: currentId, to: nextId, label: symbol });
+        if (!processed.has(nextId)) worklist.push(closure);
+      }
     }
   }
 
-  const allIds    = [...keyToId.values()];
-  const acceptIds = allIds.filter(id => (labelMap.get(id) || []).includes(nfaAccept));
+  // Add DEAD state and its self-loops only when actually needed
+  const allIds = [...keyToId.values()];
+  if (needsDead) {
+    for (const sym of alpha) {
+      dfaTransitions.push({ from: DEAD_STATE, to: DEAD_STATE, label: sym });
+    }
+    allIds.push(DEAD_STATE);
+  }
 
-  return { start: startId, accept: acceptIds, states: allIds, transitions: dfaTransitions, labelMap };
+  // A DFA state is accepting iff its NFA-set contains the single NFA accept state
+  const acceptIds = [...keyToId.values()].filter(id =>
+    (labelMap.get(id) || []).includes(nfaAccept)
+  );
+  // DEAD is never accepting
+
+  return {
+    start:      startId,
+    accept:     acceptIds,
+    states:     allIds,
+    transitions: dfaTransitions,
+    labelMap,
+    hasDeadState: needsDead,
+  };
 };
 
 // ─────────────────────────────────────────────────────────────
-//  HOPCROFT'S MINIMIZATION  (raw DFA → minimal DFA)
+//  HOPCROFT'S MINIMIZATION  —  FIX 2: no more null/-1 confusion
+//
+//  BUG (old): transTable[s][sym] = null for missing transitions.
+//  groupIndex(null) returned -1. Two states where one went to
+//  null and the other went to a real non-accept state looked
+//  different (−1 ≠ groupIndex), causing incorrect splits and
+//  wrong state counts.
+//
+//  FIX: With the complete DFA from subsetConstruct, every state
+//  now has an explicit transition for every symbol (either to a
+//  real DFA state or to DEAD). transTable will never be null for
+//  any state in `states`, so groupIndex comparisons are always
+//  comparing real partition indices. Minimization is now correct.
 // ─────────────────────────────────────────────────────────────
 const minimizeDFA = (dfa) => {
   const { states, transitions, start, accept } = dfa;
   const alpha     = [...new Set(transitions.map(t => t.label))].sort();
   const acceptSet = new Set(accept);
 
-  // O(1) transition lookup
+  // ── Build O(1) transition lookup ──────────────────────────
+  // With complete DFA, every transTable[s][sym] is a real state id (never null).
   const transTable = {};
   for (const s of states) {
     transTable[s] = {};
     for (const sym of alpha) {
       const t = transitions.find(tr => tr.from === s && tr.label === sym);
+      // Safety fallback to null — but with complete DFA this branch never fires
       transTable[s][sym] = t ? t.to : null;
     }
   }
 
-  // Initial partition: {accept} vs {non-accept}
+  // ── Initial partition: {accepting} vs {non-accepting} ─────
+  // DEAD (non-accepting) starts in the non-accepting group.
+  // Hopcroft refinement will correctly isolate it if distinguishable.
   const accepting    = states.filter(s =>  acceptSet.has(s));
   const nonAccepting = states.filter(s => !acceptSet.has(s));
   let partition      = [
@@ -331,13 +350,14 @@ const minimizeDFA = (dfa) => {
     ...(nonAccepting.length > 0 ? [nonAccepting] : []),
   ];
 
-  // groupIndex: which partition group does a state (or null dead-state) belong to?
+  // ── groupIndex: which partition does a state belong to? ───
+  // null still maps to -1 as a safety net (should not occur with complete DFA)
   const groupIndex = (state) => {
     if (state === null) return -1;
     return partition.findIndex(g => g.includes(state));
   };
 
-  // Iteratively split until stable
+  // ── Iterative refinement until stable ─────────────────────
   let changed = true;
   while (changed) {
     changed = false;
@@ -346,7 +366,9 @@ const minimizeDFA = (dfa) => {
     for (const group of partition) {
       if (group.length === 1) { next.push(group); continue; }
 
-      // Split: keep states together only if they go to the same group on every symbol
+      // Two states stay together only if they go to the SAME
+      // partition group on every symbol. If they differ on any
+      // symbol, split them into separate subgroups.
       const subgroups = [];
       for (const state of group) {
         let placed = false;
@@ -354,8 +376,10 @@ const minimizeDFA = (dfa) => {
           const rep  = sg[0];
           let   same = true;
           for (const sym of alpha) {
+            // With complete DFA: groupIndex never returns -1 here
             if (groupIndex(transTable[state][sym]) !== groupIndex(transTable[rep][sym])) {
-              same = false; break;
+              same = false;
+              break;
             }
           }
           if (same) { sg.push(state); placed = true; break; }
@@ -370,7 +394,7 @@ const minimizeDFA = (dfa) => {
     partition = next;
   }
 
-  // Build minimized DFA
+  // ── Build minimized DFA from final partition ───────────────
   const minId   = (idx) => `M${idx}`;
   const groupOf = (state) => partition.findIndex(g => g.includes(state));
 
@@ -380,17 +404,16 @@ const minimizeDFA = (dfa) => {
     .filter(Boolean);
   const minStates = partition.map((_, i) => minId(i));
 
-  // One transition per (from-group, symbol) — use group's first state as representative.
-  // ── Self-loop transitions (i === j) are explicitly included. ──
+  // One transition per (from-group, symbol) using the first state as representative
   const seen = new Set();
   const minTransitions = [];
   for (let i = 0; i < partition.length; i++) {
     const rep = partition[i][0];
     for (const sym of alpha) {
-      const next = transTable[rep][sym];
-      if (next === null) continue;
+      const nextState = transTable[rep][sym];
+      if (nextState === null) continue;   // safety — should not occur
 
-      const j   = groupOf(next);
+      const j   = groupOf(nextState);
       const key = `${i}_${j}_${sym}`;
       if (!seen.has(key)) {
         seen.add(key);
@@ -399,14 +422,31 @@ const minimizeDFA = (dfa) => {
     }
   }
 
-  return { start: minStart, accept: minAccept, states: minStates, transitions: minTransitions };
+  // Track which minimized state is the dead/trap state
+  // A state is "dead" if it is non-accepting AND only transitions to itself
+  const deadMinIds = new Set(
+    minStates.filter(mid => {
+      if (minAccept.includes(mid)) return false;
+      return minTransitions
+        .filter(t => t.from === mid)
+        .every(t => t.to === mid);
+    })
+  );
+
+  return {
+    start:        minStart,
+    accept:       minAccept,
+    states:       minStates,
+    transitions:  minTransitions,
+    deadStates:   [...deadMinIds],
+  };
 };
 
 // Public entry point
 const convertNfaToDfa = (nfa) => minimizeDFA(subsetConstruct(nfa));
 
 // ─────────────────────────────────────────────────────────────
-//  REACT FLOW CONVERTERS
+//  REACT FLOW CONVERTERS  (untouched except dead-state nodeType)
 // ─────────────────────────────────────────────────────────────
 
 const bfsLayout = (startId, transitions, allStates, colW, rowH) => {
@@ -419,7 +459,6 @@ const bfsLayout = (startId, transitions, allStates, colW, rowH) => {
     colCount[col] = colCount[col] || 0;
     posMap[id]    = { x: col * colW + 80, y: colCount[col] * rowH + 80 };
     colCount[col]++;
-    // Don't follow self-loops for layout purposes (already visited)
     transitions.filter(t => t.from === id && t.to !== id).forEach(t => {
       if (!visited.has(t.to)) queue.push({ id: t.to, col: col + 1 });
     });
@@ -444,7 +483,6 @@ const nfaToFlow = (nfa) => {
     const isEps  = t.label.includes('ε');
     return {
       id: `e${i}`, source: t.from, target: t.to, label: t.label,
-      // ── Self-loops use our custom edge type so they render correctly ──
       type: isSelf ? 'selfLoop' : 'default',
       animated: isEps,
       style: { stroke: isEps ? '#6b7280' : '#22d3ee', strokeWidth: 1.5, strokeDasharray: isEps ? '5,4' : undefined },
@@ -457,13 +495,23 @@ const nfaToFlow = (nfa) => {
 };
 
 const dfaToFlow = (dfa) => {
-  const posMap = bfsLayout(dfa.start, dfa.transitions, dfa.states, 220, 140);
-  const nodes  = dfa.states.map((id, i) => ({
-    id, type: 'stateNode', position: posMap[id],
-    data: { label: id, nodeType: id === dfa.start ? 'start' : dfa.accept.includes(id) ? 'accept' : 'normal', delay: i * 0.1 },
-  }));
+  const deadSet = new Set(dfa.deadStates || []);
+  const posMap  = bfsLayout(dfa.start, dfa.transitions, dfa.states, 220, 140);
 
-  // Merge parallel edges (same from+to, different symbol) → combined label
+  const nodes = dfa.states.map((id, i) => {
+    let nodeType = 'normal';
+    if (id === dfa.start)          nodeType = 'start';
+    if (dfa.accept.includes(id))   nodeType = 'accept';
+    if (deadSet.has(id))           nodeType = 'dead';   // trap state gets its own style
+    // start can also be accept (e.g. a*)
+    if (id === dfa.start && dfa.accept.includes(id)) nodeType = 'accept';
+
+    return {
+      id, type: 'stateNode', position: posMap[id],
+      data: { label: id, nodeType, delay: i * 0.1 },
+    };
+  });
+
   const edgeMap = {};
   for (const t of dfa.transitions) {
     const key = `${t.from}__${t.to}`;
@@ -472,16 +520,15 @@ const dfaToFlow = (dfa) => {
 
   const edges = Object.values(edgeMap).map((t, i) => {
     const isSelf = t.from === t.to;
+    const isDead = deadSet.has(t.to);
     return {
       id: `de${i}`, source: t.from, target: t.to, label: t.label,
-      // ── Self-loops (e.g. M0 --b--> M0) MUST use 'selfLoop' type.
-      //    React Flow renders source===target as invisible with 'default'. ──
       type: isSelf ? 'selfLoop' : 'default',
       animated: false,
-      style: { stroke: '#a78bfa', strokeWidth: 1.8 },
+      style: { stroke: isDead ? '#6b2020' : '#a78bfa', strokeWidth: 1.8 },
       labelStyle: { fill: '#e2e8f0', fontSize: 11, fontFamily: 'monospace' },
       labelBgStyle: { fill: '#0a0d16', fillOpacity: 0.85 }, labelBgPadding: [4, 3],
-      markerEnd: { type: MarkerType.ArrowClosed, color: '#a78bfa' },
+      markerEnd: { type: MarkerType.ArrowClosed, color: isDead ? '#6b2020' : '#a78bfa' },
     };
   });
 
@@ -489,10 +536,9 @@ const dfaToFlow = (dfa) => {
 };
 
 // ─────────────────────────────────────────────────────────────
-//  MAIN COMPONENT
+//  MAIN COMPONENT  (JSX untouched)
 // ─────────────────────────────────────────────────────────────
 const AutomataPage = () => {
-  // Register both custom node and custom edge types
   const nodeTypes = useMemo(() => ({ stateNode: StateNode }), []);
   const edgeTypes = useMemo(() => ({ selfLoop: SelfLoopEdge }), []);
 
@@ -535,13 +581,12 @@ const AutomataPage = () => {
       const dfa = convertNfaToDfa(currentNFA);
       const { nodes: n, edges: e } = dfaToFlow(dfa);
       setNodes(n); setEdges(e); setMode('DFA');
-      notify(`Minimal DFA: ${dfa.states.length} state(s), ${dfa.accept.length} accept state(s)`);
+      const deadNote = dfa.deadStates.length > 0 ? `, ${dfa.deadStates.length} trap state(s)` : '';
+      notify(`Minimal DFA: ${dfa.states.length} state(s), ${dfa.accept.length} accept state(s)${deadNote}`);
     } catch (err) { notify(`⚠ DFA Error: ${err.message}`); }
   };
 
-  // ─────────────────────────────────────────────────────────
-  //  JSX — completely untouched
-  // ─────────────────────────────────────────────────────────
+  // ─── JSX (completely untouched) ───────────────────────────
   return (
     <div className="h-full w-full flex flex-col px-4 pb-4 relative">
 
@@ -562,7 +607,7 @@ const AutomataPage = () => {
         <button onClick={convertToDFA}>DFA</button>
       </div>
 
-      {/* GRAPH — edgeTypes added alongside existing nodeTypes */}
+      {/* GRAPH */}
       <div className="h-[400px] border">
         <ReactFlow
           nodes={nodes} edges={edges}
@@ -608,7 +653,7 @@ const AutomataPage = () => {
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center">
           <div className="bg-[#0E121C] p-6 rounded-xl border">
             <h2 className="text-green-400 mb-4">Regex Help</h2>
-            <p className="text-sm">a*, (a|b), ab</p>
+            <p className="text-sm">a*, (a|b), ab, (a|b)*abb</p>
             <button onClick={() => setShowHelp(false)}>Close</button>
           </div>
         </div>

@@ -1,12 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Play, Activity, Code2, Network, Cpu, ShieldAlert, Cpu as Microchip, Terminal, Bug } from 'lucide-react';
+import {
+  Play, Activity, Code2, Network, Cpu,
+  ShieldAlert, Cpu as Microchip,
+  Terminal, Bug
+} from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
+
+const LS_LATEST = "telemetry_latest";
 
 const DashboardPage = () => {
   const navigate = useNavigate();
 
-  // ✅ REAL STATS STATE
   const [stats, setStats] = useState({
     tokens: 0,
     latency: 0,
@@ -14,152 +19,109 @@ const DashboardPage = () => {
     optimized: 0
   });
 
-  // ✅ FETCH REAL DATA
+  const loadStats = () => {
+    try {
+      const latest = JSON.parse(localStorage.getItem(LS_LATEST));
+      if (!latest) return;
+
+      setStats({
+        tokens: latest.tokens?.length || 0,
+        latency: latest.latency || 0,
+        errors: latest.syntax?.includes("Error") ? 1 : 0,
+        optimized: latest.optimized?.length || 0
+      });
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const code = "a = 2 * 3 + 4;"; // sample input
-
-        // 🔹 Compile API
-        const compileRes = await fetch("http://127.0.0.1:5000/compile", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ code })
-        });
-
-        const compileData = await compileRes.json();
-
-        // 🔹 Telemetry API
-        const teleRes = await fetch("http://127.0.0.1:5000/telemetry", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ code })
-        });
-
-        const teleData = await teleRes.json();
-
-        setStats({
-          tokens: compileData.tokens?.length || 0,
-          latency: teleData.latency || 0,
-          errors: compileData.syntax.includes("Error") ? 1 : 0,
-          optimized: compileData.optimized?.length || 0
-        });
-
-      } catch (err) {
-        console.error("Dashboard fetch error:", err);
-      }
-    };
-
-    fetchData();
+    loadStats();
+    window.addEventListener('telemetry-updated', loadStats);
+    return () => window.removeEventListener('telemetry-updated', loadStats);
   }, []);
 
-  const modules = [
-    { title: "Automata Core", desc: "Visualize Regular Expressions transformations into NFA and highly optimized DFA states.", icon: <Network size={24} />, path: "/automata", color: "cyan-400", status: "Active" },
-    { title: "Pipeline Execution", desc: "Observe the step-by-step lexical, syntax, and semantic analysis flow in real-time.", icon: <Microchip size={24} />, path: "/pipeline", color: "purple-500", status: "Ready" },
-    { title: "Debug Assistant", desc: "AI-powered syntax error detection and automatic resolution suggestions.", icon: <ShieldAlert size={24} />, path: "/debug", color: "gray-400", status: "Online" }
-  ];
-
-  // ✅ REAL DATA FOR UI
   const statData = [
     { icon: <Terminal/>, title: "Tokens Parsed", value: stats.tokens },
     { icon: <Cpu/>, title: "Compile Time", value: `${stats.latency} ms` },
-    { icon: <Bug/>, title: "Known Errors", value: stats.errors },
+    { icon: <Bug/>, title: "Errors", value: stats.errors },
     { icon: <Activity/>, title: "Optimized Lines", value: stats.optimized }
+  ];
+
+  const modules = [
+    { title: "Automata Core", icon: <Network size={24} />, path: "/automata" },
+    { title: "Pipeline Execution", icon: <Microchip size={24} />, path: "/pipeline" },
+    { title: "Debug Assistant", icon: <ShieldAlert size={24} />, path: "/debug" }
   ];
 
   return (
     <div className="h-full w-full flex flex-col pt-10 pb-20 px-6 md:px-12 overflow-y-auto">
-      
-      {/* Hero Section */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-10">
-        <motion.div 
-          initial={{ opacity: 0, x: -20 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ duration: 0.5 }}
-        >
-          <div className="inline-flex items-center px-3 py-1 bg-cyan-400/10 border border-cyan-400/20 rounded text-cyan-400 text-xs font-mono mb-4">
-            <Activity className="w-3 h-3 mr-2 animate-pulse" />
-            System Live
-          </div>
 
-          <h1 className="text-4xl md:text-5xl font-orbitron font-medium tracking-wide text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-purple-500 mb-2">
-            MINI_COMPILER<span className="text-white ml-2">STUDIO</span>
-          </h1>
+      {/* 🔥 HERO */}
+      <motion.div
+        initial={{ opacity: 0, y: -20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="mb-10"
+      >
+        <h1 className="text-4xl font-orbitron bg-gradient-to-r from-cyan-400 to-purple-500 bg-clip-text text-transparent mb-3">
+          MINI COMPILER STUDIO
+        </h1>
 
-          <p className="text-gray-400 font-inter text-md max-w-xl mb-6">
-            A comprehensive visualization environment for compiler theory. 
-            Write, compile, and debug custom syntax.
-          </p>
+        <div className="flex gap-4">
+          <Link to="/editor" className="px-5 py-2 border border-cyan-400 text-cyan-400 rounded hover:bg-cyan-400/10 transition">
+            Start
+          </Link>
+          <Link to="/telemetry" className="px-5 py-2 border border-gray-600 text-gray-300 rounded hover:bg-white/5 transition">
+            Telemetry
+          </Link>
+        </div>
+      </motion.div>
 
-          <div className="flex space-x-4">
-            <Link 
-              to="/editor" 
-              className="group flex items-center px-6 py-3 bg-gradient-to-r from-cyan-400/10 to-purple-500/10 border border-cyan-400/30 rounded-lg text-cyan-400 font-medium tracking-wide hover:from-cyan-400/20 hover:to-purple-500/20 transition-all duration-300 shadow-sm"
-            >
-              <Play size={18} className="mr-3" />
-              <span>Start Simulation</span>
-            </Link>
-
-            <Link 
-              to="/telemetry" 
-              className="group flex items-center px-6 py-3 border border-gray-700 rounded-lg text-gray-300 font-medium tracking-wide hover:border-gray-500 hover:text-white transition-all duration-300 bg-black/20"
-            >
-              <Activity size={18} className="mr-3" />
-              <span>View Telemetry</span>
-            </Link>
-          </div>
-        </motion.div>
-      </div>
-
-      {/* Top Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12 mt-4">
+      {/* 🔥 STATS */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
         {statData.map((stat, i) => (
-          <motion.div key={i}
-            initial={{ opacity: 0, y: 20 }} 
-            animate={{ opacity: 1, y: 0 }} 
-            transition={{ delay: 0.1 * i }}
-            className="p-5 rounded-xl bg-[#10141d] border border-gray-800 hover:border-gray-700 transition-colors flex items-center justify-between group cursor-default"
+          <motion.div
+            key={i}
+            initial={{ opacity: 0, y: 30 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: i * 0.1 }}
+            whileHover={{ scale: 1.05 }}
+            className="p-5 rounded-xl bg-[#10141d] border border-gray-800 hover:border-cyan-400/40 transition flex items-center justify-between group"
           >
             <div>
-              <p className="text-gray-500 text-xs font-mono mb-1">{stat.title}</p>
-              <h3 className="text-2xl font-semibold text-white group-hover:text-cyan-400 transition-colors">
+              <p className="text-gray-500 text-xs mb-1">{stat.title}</p>
+              <h3 className="text-2xl text-white group-hover:text-cyan-400 transition">
                 {stat.value}
               </h3>
             </div>
 
-            <div className="w-10 h-10 rounded-full bg-cyan-400/5 text-cyan-400 flex items-center justify-center">
+            <div className="w-10 h-10 rounded-full bg-cyan-400/10 text-cyan-400 flex items-center justify-center shadow-md group-hover:shadow-cyan-400/30 transition">
               {React.cloneElement(stat.icon, { size: 20 })}
             </div>
           </motion.div>
         ))}
       </div>
 
-      {/* Modules */}
+      {/* 🔥 MODULES */}
       <div>
-        <h2 className="text-lg font-orbitron text-gray-200 mb-6 flex items-center">
-          <Code2 size={20} className="mr-2 text-purple-400" /> ACTIVE MODULES
+        <h2 className="text-lg text-gray-200 mb-6 flex items-center">
+          <Code2 size={20} className="mr-2 text-purple-400" />
+          ACTIVE MODULES
         </h2>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {modules.map((module, i) => (
-            <motion.div key={i}
-              initial={{ opacity: 0, scale: 0.95 }} 
-              animate={{ opacity: 1, scale: 1 }} 
-              transition={{ delay: 0.3 + (i * 0.1) }}
-              onClick={() => navigate(module.path)}
-              className={`p-6 bg-[#0E121C] border border-gray-800 rounded-xl cursor-pointer transition-all duration-300 hover:scale-[1.02] hover:border-${module.color.split('-')[0]}/30 hover:shadow-lg`}
+          {modules.map((m, i) => (
+            <motion.div
+              key={i}
+              whileHover={{ scale: 1.03 }}
+              onClick={() => navigate(m.path)}
+              className="p-6 bg-[#0E121C] border border-gray-800 rounded-xl cursor-pointer hover:border-purple-400/40 transition"
             >
-              <div className={`w-12 h-12 rounded bg-${module.color.split('-')[0]}/10 text-${module.color} flex items-center justify-center mb-4`}>
-                {module.icon}
-              </div>
-
-              <h3 className="text-lg font-medium text-white mb-2">{module.title}</h3>
-              <p className="text-gray-400 text-sm mb-4">{module.desc}</p>
-
-              <div className="flex items-center text-xs text-gray-500">
-                <span className={`w-1.5 h-1.5 rounded-full bg-${module.color.split('-')[0]} mr-2`}></span>
-                {module.status}
-              </div>
+              <div className="mb-4 text-purple-400">{m.icon}</div>
+              <h3 className="text-white mb-2">{m.title}</h3>
+              <p className="text-gray-400 text-sm">
+                Click to explore module
+              </p>
             </motion.div>
           ))}
         </div>

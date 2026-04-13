@@ -105,14 +105,16 @@ const EditorPage = () => {
       localStorage.setItem("pipeline_code", code);
       window.dispatchEvent(new Event("pipeline-update"));
 
-      if (compileData.syntax && compileData.syntax.includes("Error")) {
-        updateProjectStatus("FAILED_BUILD");
-      } else {
-        updateProjectStatus("STABLE");
-      }
-
+      // 🔥 FIX: SAVE COMBINED DATA (IMPORTANT)
       if (telemetryData && !telemetryData.error) {
-        localStorage.setItem(LS_LATEST, JSON.stringify(telemetryData));
+        const combinedData = {
+          ...telemetryData,
+          tokens: compileData.tokens,
+          syntax: compileData.syntax,
+          optimized: compileData.optimized
+        };
+
+        localStorage.setItem(LS_LATEST, JSON.stringify(combinedData));
 
         const prev = readHistory();
         const updated = {
@@ -123,6 +125,12 @@ const EditorPage = () => {
 
         localStorage.setItem(LS_HISTORY, JSON.stringify(updated));
         window.dispatchEvent(new Event('telemetry-updated'));
+      }
+
+      if (compileData.syntax && compileData.syntax.includes("Error")) {
+        updateProjectStatus("FAILED_BUILD");
+      } else {
+        updateProjectStatus("STABLE");
       }
 
       if (compileData.syntax && compileData.syntax.includes('Error')) {

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
-  Play, Activity, Code2, Network, Cpu,
+  Activity, Code2, Network, Cpu,
   ShieldAlert, Cpu as Microchip,
   Terminal, Bug
 } from 'lucide-react';
@@ -19,6 +19,7 @@ const DashboardPage = () => {
     optimized: 0
   });
 
+  // 📊 Load stats
   const loadStats = () => {
     try {
       const latest = JSON.parse(localStorage.getItem(LS_LATEST));
@@ -38,14 +39,30 @@ const DashboardPage = () => {
   useEffect(() => {
     loadStats();
     window.addEventListener('telemetry-updated', loadStats);
-    return () => window.removeEventListener('telemetry-updated', loadStats);
+
+    // ✅ CHATBASE (ONLY LOAD ONCE)
+    if (!document.getElementById("chatbase-script")) {
+      const script = document.createElement("script");
+      script.src = "https://www.chatbase.co/embed.min.js";
+
+      // 👉 USE ONLY ONE ID (your correct one)
+      script.id = "chatbase-script";
+      script.setAttribute("chatbotId", "DQAFyy62OiKpuxSSwHqUh"); // ✅ your bot id
+      script.setAttribute("domain", "www.chatbase.co");
+
+      document.body.appendChild(script);
+    }
+
+    return () => {
+      window.removeEventListener('telemetry-updated', loadStats);
+    };
   }, []);
 
   const statData = [
-    { icon: <Terminal/>, title: "Tokens Parsed", value: stats.tokens },
-    { icon: <Cpu/>, title: "Compile Time", value: `${stats.latency} ms` },
-    { icon: <Bug/>, title: "Errors", value: stats.errors },
-    { icon: <Activity/>, title: "Optimized Lines", value: stats.optimized }
+    { icon: <Terminal />, title: "Tokens Parsed", value: stats.tokens },
+    { icon: <Cpu />, title: "Compile Time", value: `${stats.latency} ms` },
+    { icon: <Bug />, title: "Errors", value: stats.errors },
+    { icon: <Activity />, title: "Optimized Lines", value: stats.optimized }
   ];
 
   const modules = [
@@ -58,20 +75,16 @@ const DashboardPage = () => {
     <div className="h-full w-full flex flex-col pt-10 pb-20 px-6 md:px-12 overflow-y-auto">
 
       {/* 🔥 HERO */}
-      <motion.div
-        initial={{ opacity: 0, y: -20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="mb-10"
-      >
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mb-10">
         <h1 className="text-4xl font-orbitron bg-gradient-to-r from-cyan-400 to-purple-500 bg-clip-text text-transparent mb-3">
           MINI COMPILER STUDIO
         </h1>
 
         <div className="flex gap-4">
-          <Link to="/editor" className="px-5 py-2 border border-cyan-400 text-cyan-400 rounded hover:bg-cyan-400/10 transition">
+          <Link to="/editor" className="px-5 py-2 border border-cyan-400 text-cyan-400 rounded">
             Start
           </Link>
-          <Link to="/telemetry" className="px-5 py-2 border border-gray-600 text-gray-300 rounded hover:bg-white/5 transition">
+          <Link to="/telemetry" className="px-5 py-2 border border-gray-600 text-gray-300 rounded">
             Telemetry
           </Link>
         </div>
@@ -82,22 +95,14 @@ const DashboardPage = () => {
         {statData.map((stat, i) => (
           <motion.div
             key={i}
-            initial={{ opacity: 0, y: 30 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: i * 0.1 }}
             whileHover={{ scale: 1.05 }}
-            className="p-5 rounded-xl bg-[#10141d] border border-gray-800 hover:border-cyan-400/40 transition flex items-center justify-between group"
+            className="p-5 rounded-xl bg-[#10141d] border border-gray-800 flex justify-between"
           >
             <div>
-              <p className="text-gray-500 text-xs mb-1">{stat.title}</p>
-              <h3 className="text-2xl text-white group-hover:text-cyan-400 transition">
-                {stat.value}
-              </h3>
+              <p className="text-gray-500 text-xs">{stat.title}</p>
+              <h3 className="text-2xl text-white">{stat.value}</h3>
             </div>
-
-            <div className="w-10 h-10 rounded-full bg-cyan-400/10 text-cyan-400 flex items-center justify-center shadow-md group-hover:shadow-cyan-400/30 transition">
-              {React.cloneElement(stat.icon, { size: 20 })}
-            </div>
+            <div className="text-cyan-400">{stat.icon}</div>
           </motion.div>
         ))}
       </div>
@@ -115,10 +120,10 @@ const DashboardPage = () => {
               key={i}
               whileHover={{ scale: 1.03 }}
               onClick={() => navigate(m.path)}
-              className="p-6 bg-[#0E121C] border border-gray-800 rounded-xl cursor-pointer hover:border-purple-400/40 transition"
+              className="p-6 bg-[#0E121C] border border-gray-800 rounded-xl cursor-pointer"
             >
               <div className="mb-4 text-purple-400">{m.icon}</div>
-              <h3 className="text-white mb-2">{m.title}</h3>
+              <h3 className="text-white">{m.title}</h3>
               <p className="text-gray-400 text-sm">
                 Click to explore module
               </p>
@@ -126,6 +131,9 @@ const DashboardPage = () => {
           ))}
         </div>
       </div>
+
+      {/* 🤖 Helper Text */}
+    
 
     </div>
   );

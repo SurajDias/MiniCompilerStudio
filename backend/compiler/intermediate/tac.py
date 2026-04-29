@@ -1,125 +1,190 @@
 # =============================================================
 #  backend/compiler/intermediate/tac.py
 #
-#  WHAT CHANGED vs original:
-#  - No longer splits code by semicolons and guesses structure
-#  - Internally calls parse_to_ast() to get a real AST first
-#  - Walks the AST recursively to emit correct 3-address code
-#  - Handles operator precedence correctly (AST does the work)
-#  - Uses temp variables t1, t2, ... exactly as before
-#  - generate_TAC(code) still takes a code string → backward compat
-#
-#  HOW 3-ADDRESS CODE WORKS (for viva):
-#  Every instruction has at most ONE operator.
-#  Complex expressions are broken into steps using temp variables.
-#
-#  EXAMPLE:
-#  Source:   a = 2 * 3 + b
-#  AST:      AssignmentNode(a, BinaryOp(+, BinaryOp(*, 2, 3), b))
-#  TAC:
-#    t1 = 2 * 3        ← inner BinaryOp first
-#    t2 = t1 + b       ← outer BinaryOp uses t1
-#    a  = t2           ← final assignment
+#  FINAL UPGRADE:
+#  - Added WhileNode TAC generation 🔥
 # =============================================================
 
-from backend.compiler.parser.parser import parse_to_ast
+from backend.compiler.parser.parser  import parse_to_ast
 from backend.compiler.ast.ast_nodes  import (
     ProgramNode, AssignmentNode, BinaryOpNode,
-    NumberNode, IdentifierNode
+    NumberNode, IdentifierNode,
+    IfNode, ConditionNode, WhileNode
 )
 
 
 class TACGenerator:
-    """
-    Walks an AST and emits Three-Address Code instructions.
-    One instance per compilation — do not reuse.
-    """
 
     def __init__(self):
-        self._temp_count  = 1      # counter for t1, t2, ...
-        self._instructions = []    # list of TAC strings (final output)
+        self._temp_count   = 1
+        self._label_count  = 1
+        self._instructions = []
 
-    # ── Helpers ───────────────────────────────────────────────
+    # ─────────────────────────────
+    # Helpers
+    # ─────────────────────────────
 
-    def _new_temp(self) -> str:
-        """Allocate a fresh temporary variable name."""
-        name = f"t{self._temp_count}"
+    def _new_temp(self):
+        t = f"t{self._temp_count}"
         self._temp_count += 1
-        return name
+        return t
 
-    def _emit(self, line: str):
-        """Append one TAC instruction."""
+    def _new_label(self):
+        l = f"L{self._label_count}"
+        self._label_count += 1
+        return l
+
+    def _emit(self, line):
         self._instructions.append(line)
 
-    # ── Expression visitor ────────────────────────────────────
+    def _emit_label(self, label):
+        self._instructions.append(f"{label}:")
 
-    def _gen_expr(self, node) -> str:
-        """
-        Recursively generate TAC for an expression node.
-        Returns the name of the variable/temp that holds the result.
-        """
+    # ─────────────────────────────
+    # Expressions
+    # ─────────────────────────────
 
-        # ── Leaf: integer or float literal ────────────────────
+    def _gen_expr(self, node):
+
         if isinstance(node, NumberNode):
             return str(node.value)
 
-        # ── Leaf: variable reference ──────────────────────────
         if isinstance(node, IdentifierNode):
             return node.name
 
-        # ── Inner node: binary operation ──────────────────────
         if isinstance(node, BinaryOpNode):
-            # Recursively evaluate both sides first (post-order traversal)
-            left_val  = self._gen_expr(node.left)
-            right_val = self._gen_expr(node.right)
+            l = self._gen_expr(node.left)
+            r = self._gen_expr(node.right)
+            t = self._new_temp()
+            self._emit(f"{t} = {l} {node.op} {r}")
+            return t
 
-            # Allocate a temp for this operation's result
-            temp = self._new_temp()
-            self._emit(f"{temp} = {left_val} {node.op} {right_val}")
-            return temp
+        raise ValueError("Unknown expression")
 
-        # Fallback (should not happen with a well-formed AST)
-        raise ValueError(f"TACGenerator: unknown node type {type(node).__name__}")
+    # ─────────────────────────────
+    # Condition
+    # ─────────────────────────────
 
-    # ── Statement visitor ─────────────────────────────────────
+    def _gen_condition(self, node):
+        l = self._gen_expr(node.left)
+        r = self._gen_expr(node.right)
+        return l, r, node.op
+
+    # ─────────────────────────────
+    # Statements
+    # ─────────────────────────────
 
     def _gen_stmt(self, node):
+
         if isinstance(node, AssignmentNode):
-            # Generate TAC for the right-hand side expression
-            result_var = self._gen_expr(node.value)
+            self._gen_assignment(node)
 
-            # If the result is already in a temp, assign it to the variable.
-            # If the result IS the variable itself (trivial `a = a`), skip.
-            if result_var != node.variable:
-                self._emit(f"{node.variable} = {result_var}")
+        elif isinstance(node, IfNode):
+            self._gen_if(node)
 
-    # ── Program entry ─────────────────────────────────────────
+        elif isinstance(node, WhileNode):
+            self._gen_while(node)
 
-    def generate(self, program: ProgramNode) -> list[str]:
-        """Generate TAC for every statement in the program."""
+    # ─────────────────────────────
+    # Assignment
+    # ─────────────────────────────
+
+    def _gen_assignment(self, node):
+        val = self._gen_expr(node.value)
+        if val != node.variable:
+            self._emit(f"{node.variable} = {val}")
+
+    # ─────────────────────────────
+    # IF
+    # ─────────────────────────────
+
+    def _gen_if(self, node):
+
+        then_label = self._new_label()
+        end_label  = self._new_label()
+
+        l, r, op = self._gen_condition(node.condition)
+
+        if node.else_body:
+            else_label = self._new_label()
+
+            self._emit(f"if {l} {op} {r} goto {then_label}")
+            self._emit(f"goto {else_label}")
+
+            self._emit_label(then_label)
+            for s in node.then_body:
+                self._gen_stmt(s)
+            self._emit(f"goto {end_label}")
+
+            self._emit_label(else_label)
+            for s in node.else_body:
+                self._gen_stmt(s)
+
+            self._emit_label(end_label)
+
+        else:
+            self._emit(f"if {l} {op} {r} goto {then_label}")
+            self._emit(f"goto {end_label}")
+
+            self._emit_label(then_label)
+            for s in node.then_body:
+                self._gen_stmt(s)
+
+            self._emit_label(end_label)
+
+    # ─────────────────────────────
+    # 🔥 WHILE LOOP (FINAL BOSS)
+    # ─────────────────────────────
+
+    def _gen_while(self, node):
+
+        start_label = self._new_label()
+        body_label  = self._new_label()
+        end_label   = self._new_label()
+
+        # loop start
+        self._emit_label(start_label)
+
+        l, r, op = self._gen_condition(node.condition)
+
+        # condition check
+        self._emit(f"if {l} {op} {r} goto {body_label}")
+        self._emit(f"goto {end_label}")
+
+        # loop body
+        self._emit_label(body_label)
+        for stmt in node.body:
+            self._gen_stmt(stmt)
+
+        # jump back
+        self._emit(f"goto {start_label}")
+
+        # exit
+        self._emit_label(end_label)
+
+    # ─────────────────────────────
+    # Program
+    # ─────────────────────────────
+
+    def generate(self, program):
+
         for stmt in program.statements:
             self._gen_stmt(stmt)
+
         return self._instructions
 
 
-# ─────────────────────────────────────────────────────────────
-#  Public API  (called by routes.py — signature unchanged)
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────
+# Public API
+# ─────────────────────────────
 
-def generate_TAC(code: str) -> list[str]:
-    """
-    Main entry point.
-    Accepts raw source code, returns a list of TAC strings.
-    Identical signature to original for routes.py compatibility.
-    """
-    # Step 1: Build AST (using the upgraded parser)
+def generate_TAC(code: str):
+
     ast, errors = parse_to_ast(code)
 
     if errors:
-        # Surface parse errors as TAC error messages
         return [f"TAC Error: {e}" for e in errors]
 
-    # Step 2: Walk AST and emit TAC
     try:
         gen = TACGenerator()
         return gen.generate(ast)

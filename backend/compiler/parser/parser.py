@@ -1,267 +1,260 @@
 # =============================================================
 #  backend/compiler/parser/parser.py
 #
-#  WHAT CHANGED vs original:
-#  - Replaced split()-based approach with a real recursive
-#    descent parser (industry-standard technique)
-#  - Proper operator precedence: * / before + -
-#  - Builds a full AST instead of returning a string
-#  - Structured errors with line and column numbers
-#  - parse() still returns a STRING for routes.py compatibility
-#  - parse_to_ast() returns the AST for TAC generation
-#
-#  GRAMMAR (what the parser understands):
-#  ───────────────────────────────────────
-#  program    → statement* EOF
-#  statement  → assignment SEMICOLON
-#  assignment → ID EQUALS expression
-#  expression → term ( (PLUS | MINUS) term )*
-#  term       → factor ( (STAR | SLASH) factor )*
-#  factor     → NUMBER | FLOAT | ID | LPAREN expression RPAREN
+#  FINAL UPGRADE:
+#  - Added while loop parsing 🔥
 # =============================================================
 
 from backend.compiler.lexer.tokenizer import tokenize_full, Token
 from backend.compiler.ast.ast_nodes   import (
     ProgramNode, AssignmentNode, BinaryOpNode,
-    NumberNode, IdentifierNode, ast_to_string
+    NumberNode, IdentifierNode,
+    IfNode, ConditionNode, WhileNode,
+    ast_to_string
 )
 from backend.compiler.semantic.symbol_table import SemanticAnalyser
 
 
-# ─────────────────────────────────────────────────────────────
-#  Parser class
-# ─────────────────────────────────────────────────────────────
+_COMPARE_OPS = {'>', '<', '>=', '<=', '==', '!='}
+
 
 class Parser:
     def __init__(self, tokens: list[Token]):
         self.tokens = tokens
-        self.pos    = 0         # current position in token list
-        self.errors = []        # list of error strings collected
+        self.pos    = 0
+        self.errors = []
 
-    # ── Token navigation ──────────────────────────────────────
+    # ─────────────────────────────
+    # Token navigation
+    # ─────────────────────────────
 
-    def _current(self) -> Token | None:
-        """Return the token at the current position (or None at EOF)."""
-        if self.pos < len(self.tokens):
-            return self.tokens[self.pos]
-        return None
+    def _current(self):
+        return self.tokens[self.pos] if self.pos < len(self.tokens) else None
 
-    def _peek_type(self) -> str:
-        """Return current token's type, or 'EOF'."""
+    def _peek_type(self):
         tok = self._current()
         return tok.type if tok else 'EOF'
 
-    def _peek_value(self) -> str:
-        """Return current token's value, or ''."""
+    def _peek_value(self):
         tok = self._current()
         return tok.value if tok else ''
 
-    def _advance(self) -> Token:
-        """Consume and return the current token."""
+    def _advance(self):
         tok = self._current()
         self.pos += 1
         return tok
 
-    def _expect(self, ttype: str, tvalue: str = None) -> Token | None:
-        """
-        Consume a token of the expected type (and optionally value).
-        Records an error and returns None if the token doesn't match.
-        """
+    def _expect(self, ttype, tvalue=None):
         tok = self._current()
         if tok is None:
-            self._error(f"Expected {ttype!r} but reached end of input", line=0)
+            self._error(f"Expected {ttype}", 0)
             return None
+
         if tok.type != ttype:
-            self._error(
-                f"Expected {ttype!r} but got {tok.type!r} ({tok.value!r})",
-                line=tok.line, col=tok.col
-            )
+            self._error(f"Expected {ttype}, got {tok.type}", tok.line, tok.col)
             return None
-        if tvalue is not None and tok.value != tvalue:
-            self._error(
-                f"Expected {tvalue!r} but got {tok.value!r}",
-                line=tok.line, col=tok.col
-            )
+
+        if tvalue and tok.value != tvalue:
+            self._error(f"Expected {tvalue}, got {tok.value}", tok.line, tok.col)
             return None
+
         return self._advance()
 
-    def _error(self, message: str, line: int = 0, col: int = 0):
-        loc = f"Line {line}" + (f", Col {col}" if col else "")
-        self.errors.append(f"SyntaxError at {loc}: {message}")
+    def _error(self, msg, line=0, col=0):
+        self.errors.append(f"SyntaxError at Line {line}: {msg}")
 
-    # ── Grammar rules ─────────────────────────────────────────
+    # ─────────────────────────────
+    # Program
+    # ─────────────────────────────
 
-    def parse_program(self) -> ProgramNode:
-        """
-        program → statement* EOF
-        Entry point — parses every statement until tokens run out.
-        """
-        statements = []
-
+    def parse_program(self):
+        stmts = []
         while self._peek_type() != 'EOF':
             stmt = self._parse_statement()
-            if stmt is not None:
-                statements.append(stmt)
+            if stmt:
+                stmts.append(stmt)
+        return ProgramNode(stmts)
 
-        return ProgramNode(statements)
+    # ─────────────────────────────
+    # Statements
+    # ─────────────────────────────
 
     def _parse_statement(self):
-        """
-        statement → assignment SEMICOLON
-        Tries to parse one complete assignment like:  a = 2 * 3;
-        """
         tok = self._current()
         if tok is None:
             return None
 
-        # Must start with an identifier (left-hand side)
-        if tok.type != 'ID':
-            self._error(
-                f"Statement must start with an identifier, got {tok.value!r}",
-                line=tok.line, col=tok.col
-            )
-            # Skip to the next semicolon to recover
-            self._skip_to_semicolon()
-            return None
+        if tok.type == 'KEYWORD':
 
-        # Parse:  ID = expression ;
-        id_tok = self._advance()                      # consume ID
-        self._expect('OP', '=')                       # consume '='
-        expr = self._parse_expression()               # parse right side
-        self._expect('SEPARATOR', ';')                # consume ';'
+            if tok.value == 'if':
+                return self._parse_if()
 
-        if expr is None:
-            return None
+            if tok.value == 'while':
+                return self._parse_while()
 
-        return AssignmentNode(
-            variable = id_tok.value,
-            value    = expr,
-            line     = id_tok.line
-        )
+        if tok.type == 'ID':
+            return self._parse_assignment()
+
+        self._error(f"Unexpected token {tok.value}", tok.line, tok.col)
+        self._skip_to_semicolon()
+        return None
+
+    # ─────────────────────────────
+    # IF
+    # ─────────────────────────────
+
+    def _parse_if(self):
+        if_tok = self._advance()
+
+        self._expect('LPAREN')
+        cond = self._parse_condition()
+        self._expect('RPAREN')
+
+        then_body = self._parse_block()
+
+        else_body = []
+        if self._peek_type() == 'KEYWORD' and self._peek_value() == 'else':
+            self._advance()
+            else_body = self._parse_block()
+
+        return IfNode(cond, then_body, else_body, line=if_tok.line)
+
+    # ─────────────────────────────
+    # 🔥 WHILE LOOP
+    # ─────────────────────────────
+
+    def _parse_while(self):
+        while_tok = self._advance()
+
+        self._expect('LPAREN')
+        cond = self._parse_condition()
+        self._expect('RPAREN')
+
+        body = self._parse_block()
+
+        return WhileNode(cond, body, line=while_tok.line)
+
+    # ─────────────────────────────
+    # CONDITION
+    # ─────────────────────────────
+
+    def _parse_condition(self):
+        left = self._parse_expression()
+        tok  = self._current()
+
+        if tok and tok.value in _COMPARE_OPS:
+            op_tok = self._advance()
+            right  = self._parse_expression()
+            return ConditionNode(op_tok.value, left, right, line=op_tok.line)
+
+        self._error("Expected comparison operator", tok.line if tok else 0)
+        return None
+
+    # ─────────────────────────────
+    # BLOCK
+    # ─────────────────────────────
+
+    def _parse_block(self):
+        self._expect('LBRACE')
+        stmts = []
+
+        while self._peek_type() not in ('RBRACE', 'EOF'):
+            stmt = self._parse_statement()
+            if stmt:
+                stmts.append(stmt)
+
+        self._expect('RBRACE')
+        return stmts
+
+    # ─────────────────────────────
+    # ASSIGNMENT
+    # ─────────────────────────────
+
+    def _parse_assignment(self):
+        id_tok = self._advance()
+        self._expect('OP', '=')
+        expr = self._parse_expression()
+        self._expect('SEPARATOR', ';')
+
+        return AssignmentNode(id_tok.value, expr, line=id_tok.line)
+
+    # ─────────────────────────────
+    # EXPRESSIONS
+    # ─────────────────────────────
 
     def _parse_expression(self):
-        """
-        expression → term ( ('+' | '-') term )*
-        Handles addition and subtraction (lowest precedence).
-        """
         left = self._parse_term()
-        if left is None:
-            return None
 
-        while self._peek_type() == 'OP' and self._peek_value() in ('+', '-'):
-            op_tok = self._advance()                  # consume operator
-            right  = self._parse_term()
-            if right is None:
-                return None
-            left = BinaryOpNode(op_tok.value, left, right, line=op_tok.line)
+        while self._peek_value() in ('+', '-'):
+            op = self._advance()
+            right = self._parse_term()
+            left = BinaryOpNode(op.value, left, right, line=op.line)
 
         return left
 
     def _parse_term(self):
-        """
-        term → factor ( ('*' | '/') factor )*
-        Handles multiplication and division (higher precedence).
-        """
         left = self._parse_factor()
-        if left is None:
-            return None
 
-        while self._peek_type() == 'OP' and self._peek_value() in ('*', '/'):
-            op_tok = self._advance()                  # consume operator
-            right  = self._parse_factor()
-            if right is None:
-                return None
-            left = BinaryOpNode(op_tok.value, left, right, line=op_tok.line)
+        while self._peek_value() in ('*', '/'):
+            op = self._advance()
+            right = self._parse_factor()
+            left = BinaryOpNode(op.value, left, right, line=op.line)
 
         return left
 
     def _parse_factor(self):
-        """
-        factor → NUMBER | FLOAT | ID | LPAREN expression RPAREN
-        Handles the most basic units: literals, variables, sub-expressions.
-        """
         tok = self._current()
-        if tok is None:
-            self._error("Unexpected end of input while parsing expression")
-            return None
 
-        # Integer literal
-        if tok.type == 'NUMBER':
+        if tok.type in ('NUMBER', 'FLOAT'):
             self._advance()
             return NumberNode(tok.value, line=tok.line)
 
-        # Float literal
-        if tok.type == 'FLOAT':
-            self._advance()
-            return NumberNode(tok.value, line=tok.line)
-
-        # Variable reference
         if tok.type == 'ID':
             self._advance()
-            return IdentifierNode(tok.name if hasattr(tok,'name') else tok.value,
-                                  line=tok.line)
+            return IdentifierNode(tok.value, line=tok.line)
 
-        # Parenthesised sub-expression  ( expr )
         if tok.type == 'LPAREN':
-            self._advance()                           # consume '('
+            self._advance()
             expr = self._parse_expression()
-            self._expect('RPAREN')                    # consume ')'
+            self._expect('RPAREN')
             return expr
 
-        # Unrecognised token
-        self._error(
-            f"Unexpected token {tok.value!r} in expression",
-            line=tok.line, col=tok.col
-        )
-        self._advance()   # consume the bad token to avoid infinite loops
+        self._error(f"Unexpected token {tok.value}", tok.line, tok.col)
+        self._advance()
         return None
 
+    # ─────────────────────────────
+    # ERROR RECOVERY
+    # ─────────────────────────────
+
     def _skip_to_semicolon(self):
-        """Error recovery: skip tokens until we find a ';' or EOF."""
         while self._peek_type() not in ('SEPARATOR', 'EOF'):
             self._advance()
         if self._peek_value() == ';':
-            self._advance()   # consume the ';'
+            self._advance()
 
 
-# ─────────────────────────────────────────────────────────────
-#  Public API
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────
+# PUBLIC API
+# ─────────────────────────────
 
 def parse_to_ast(code: str):
-    """
-    Parse `code` and return (ProgramNode, errors[]).
-    Used internally by generate_TAC() and the semantic analyser.
-    """
     tokens = tokenize_full(code)
     parser = Parser(tokens)
-    ast    = parser.parse_program()
+    ast = parser.parse_program()
     return ast, parser.errors
 
 
 def parse(code: str) -> str:
-    """
-    Public function called by routes.py.
-    Returns a human-readable string — either the pretty-printed
-    AST or a structured error message.
-    Backward-compatible: routes.py checks for "Error" in result.
-    """
     ast, parse_errors = parse_to_ast(code)
 
-    # ── Syntax errors: return first error string ──
     if parse_errors:
         return "\n".join(parse_errors)
 
-    # ── Semantic analysis: check symbol table ──
-    analyser        = SemanticAnalyser()
+    analyser = SemanticAnalyser()
     semantic_errors = analyser.analyse(ast)
 
     if semantic_errors:
-        # Convert structured errors to strings
-        err_strings = [str(e) for e in semantic_errors]
-        return "\n".join(err_strings)
+        return "\n".join(str(e) for e in semantic_errors)
 
-    # ── Success: return pretty-printed AST + symbol table ──
-    ast_str  = ast_to_string(ast)
-    sym_str  = analyser.table.summary()
-    return f"Parsing Successful\n\n{ast_str}\n\n{sym_str}"
+    return f"Parsing Successful\n\n{ast_to_string(ast)}\n\n{analyser.table.summary()}"

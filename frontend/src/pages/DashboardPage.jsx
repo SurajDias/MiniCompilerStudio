@@ -40,6 +40,7 @@ const DashboardPage = () => {
     loadStats();
     window.addEventListener('telemetry-updated', loadStats);
 
+
     // ✅ CHATBASE (ONLY LOAD ONCE)
     if (!document.getElementById("chatbase-script")) {
       const script = document.createElement("script");
@@ -56,6 +57,19 @@ const DashboardPage = () => {
     return () => {
       window.removeEventListener('telemetry-updated', loadStats);
     };
+
+    // ✅ Chatbase agent added (from first code)
+    if (!document.getElementById("chatbase-script")) {
+      const script = document.createElement("script");
+      script.src = "https://www.chatbase.co/embed.min.js";
+      script.id = "chatbase-script";
+      script.setAttribute("chatbotId", "DQAFyy62OiKpuxSSwHqUh");
+      script.setAttribute("domain", "www.chatbase.co");
+      document.body.appendChild(script);
+    }
+
+    return () => window.removeEventListener('telemetry-updated', loadStats);
+ 8e6a1732 (Final compiler upgrade (if-else, while, optimizer))
   }, []);
 
   const statData = [

@@ -69,7 +69,6 @@ const DashboardPage = () => {
     }
 
     return () => window.removeEventListener('telemetry-updated', loadStats);
- 8e6a1732 (Final compiler upgrade (if-else, while, optimizer))
   }, []);
 
   const statData = [
